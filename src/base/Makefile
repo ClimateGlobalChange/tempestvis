@@ -19,7 +19,10 @@ FILES= Announce.cpp \
        kdtree.cpp \
 	   lodepng.cpp \
 	   SimpleGrid.cpp \
-	   GridElements.cpp
+	   GridElements.cpp \
+	   SchriftText.cpp \
+	   schrift.cpp \
+	   ColorMap.cpp
 
 LIB_TARGET= libvisbase.a
 
