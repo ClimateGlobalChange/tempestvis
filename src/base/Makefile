@@ -19,10 +19,15 @@ FILES= Announce.cpp \
        kdtree.cpp \
 	   lodepng.cpp \
 	   SimpleGrid.cpp \
+	   GaussQuadrature.cpp \
+	   LegendrePolynomial.cpp \
+	   MeshUtilitiesFuzzy.cpp \
 	   GridElements.cpp \
 	   SchriftText.cpp \
 	   schrift.cpp \
-	   ColorMap.cpp
+	   ColorMap.cpp \
+	   ShpFile.cpp \
+	   PNGImage.cpp
 
 LIB_TARGET= libvisbase.a
 

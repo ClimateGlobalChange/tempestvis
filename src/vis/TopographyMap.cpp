@@ -36,6 +36,7 @@
 #include <queue>
 #include <fstream>
 #include <vector>
+#include <cfloat>
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -423,6 +424,15 @@ try {
 	// Shapefile 2
 	std::string strShapefile2;
 
+	// Light angle
+	double dAngleDeg;
+
+	// Stencil width
+	int nStencilWidth;
+
+	// Maximum scale
+	double dMaxScale;
+
 	// Parse the command line
 	BeginCommandLine()
 		CommandLineString(strInputData, "in_data", "");
@@ -437,9 +447,12 @@ try {
 		CommandLineString(strLatitudeName, "latname", "lat");
 		CommandLineString(strLongitudeName, "lonname", "lon");
 		CommandLineString(strDataPath, "datapath", strDataPath.c_str());
-		CommandLineStringD(strPlotType, "plot", "FLUT", "(FLUT|U10|PRECT)");
+		CommandLineStringD(strPlotType, "plot", "", "(|DATA)");
 		CommandLineString(strShapefile, "shp", "");
 		CommandLineString(strShapefile2, "shp2", "");
+		CommandLineDoubleD(dAngleDeg, "lightangle", 135.0, "(0 = east)");
+		CommandLineInt(nStencilWidth, "width", 10);
+		CommandLineDouble(dMaxScale, "maxscale", 5000.0);
 
 		ParseCommandLine(argc, argv);
 	EndCommandLine(argv)
@@ -447,14 +460,11 @@ try {
 	AnnounceBanner();
 
 	// Check arguments
-	if ((strInputData.length() == 0) && (strInputDataList.length() == 0)) {
-		_EXCEPTIONT("No input file (--in_data) or (--in_data_list) specified");
-	}
 	if ((strInputData.length() != 0) && (strInputDataList.length() != 0)) {
 		_EXCEPTIONT("Only one of (--in_data) or (--in_data_list) may be specified");
 	}
 	if (strOutputRoot.length() == 0) {
-		_EXCEPTIONT("No output file (--out_png) specified");
+		_EXCEPTIONT("No output file (--out_root) specified");
 	}
 	if (nImageSizeX < 1) {
 		_EXCEPTIONT("--imgx must be a positive integer");
@@ -468,13 +478,22 @@ try {
 	if ((dLatEnd < -90.0) || (dLatEnd > 90.0)) {
 		_EXCEPTIONT("--lat_end must be in the range [-90.0, 90.0]");
 	}
-	if ((strPlotType != "FLUT") && (strPlotType != "U10") && (strPlotType != "PRECT")) {
-		_EXCEPTIONT("--plot must be one of \"FLUT\", \"U10\" or \"PRECT\"");
+	if ((strPlotType != "") && (strPlotType != "DATA")) {
+		_EXCEPTIONT("--plot must be one of \"\" or \"DATA\"");
 	}
+
+	// Convert light angle to radians
+	double dAngleRad = DegToRad(dAngleDeg);
 
 	// Load input file list
 	FilenameList vecInputFiles;
-	if (strInputData.length() != 0) {
+	if ((strInputData.length() == 0) && (strInputDataList.length() == 0)) {
+		if (strPlotType == "DATA") {
+			_EXCEPTIONT("For --plot \"DATA\" input data must also be specified");
+		}
+		vecInputFiles.push_back("!");
+
+	} else if (strInputData.length() != 0) {
 		vecInputFiles.push_back(strInputData);
 	} else {
 		vecInputFiles.FromFile(strInputDataList, true);
@@ -483,54 +502,62 @@ try {
 	// Create output image
 	PNGImage imgOut(nImageSizeX, nImageSizeY);
 
-	// Subset the blue marble
-	AnnounceStartBlock("Processing BlueMarble");
-	Announce("Reading image from disk");
-	PNGImage imgBlueMarble(strDataPath + std::string("/BlueMarble_June2004_3km.png"));
+	// Get the topography data
+	AnnounceStartBlock("Loading topography data");
 
-	Announce("Rescaling image");
-	PNGImage imgBlueMarbleSub;
+	std::string strTopoFile = strDataPath + std::string("/elevation_1km_GMTEDmd.nc");
+	NcFile ncfileTopo(strTopoFile.c_str());
+	if (!ncfileTopo.is_valid()) {
+		_EXCEPTION1("Unable to open data file \"%s\"", strTopoFile.c_str());
+	}
+
+	std::vector<float> dZ;
+	std::vector<float> dDZ;
+	std::vector<double> dZLatDeg;
+	std::vector<double> dZLonDeg;
 
 	{
-		int x1 = (dLonBegin + 180.0) / 360.0 * static_cast<double>(imgBlueMarble.width());
-		int x2 = (dLonEnd + 180.0) / 360.0 * static_cast<double>(imgBlueMarble.width());
-		int y1 = imgBlueMarble.height() - (dLatEnd + 90.0) / 180.0 * static_cast<double>(imgBlueMarble.height());
-		int y2 = imgBlueMarble.height() - (dLatBegin + 90.0) / 180.0 * static_cast<double>(imgBlueMarble.height());
-
-		if (y1 >= imgBlueMarble.height()) {
-			y1 = imgBlueMarble.height()-1;
+		NcVar * varLon = ncfileTopo.get_var("lon");
+		if (varLon == NULL) {
+			_EXCEPTION1("Data file \"%s\" does not not contain variable \"lon\"", strTopoFile.c_str());
 		}
-		if (y2 >= imgBlueMarble.height()) {
-			y2 = imgBlueMarble.height()-1;
+		if (varLon->num_dims() != 1) {
+			_EXCEPTION1("Data file \"%s\" variable \"lon\" must have one dimension", strTopoFile.c_str());
 		}
+		dZLonDeg.resize(varLon->get_dim(0)->size());
+		varLon->get(&(dZLonDeg[0]), dZLonDeg.size());
 
-		imgBlueMarbleSub.from_subset(imgBlueMarble, x1, y1, x2, y2, nImageSizeX, nImageSizeY);
+		NcVar * varLat = ncfileTopo.get_var("lat");
+		if (varLat == NULL) {
+			_EXCEPTION1("Data file \"%s\" does not not contain variable \"lat\"", strTopoFile.c_str());
+		}
+		if (varLat->num_dims() != 1) {
+			_EXCEPTION1("Data file \"%s\" variable \"lat\" must have one dimension", strTopoFile.c_str());
+		}
+		dZLatDeg.resize(varLat->get_dim(0)->size());
+		varLat->get(&(dZLatDeg[0]), dZLatDeg.size());
+
+		NcVar * varZ = ncfileTopo.get_var("Band1");
+		if (varZ == NULL) {
+			_EXCEPTION1("Data file \"%s\" does not not contain variable \"Band1\"", strTopoFile.c_str());
+		}
+		if (varZ->num_dims() != 2) {
+			_EXCEPTION1("Data file \"%s\" variable \"Band1\" must have two dimensions", strTopoFile.c_str());
+		}
+		dZ.resize(dZLatDeg.size() * dZLonDeg.size());
+		varZ->get(&(dZ[0]), dZLatDeg.size(), dZLonDeg.size());
+
+		dDZ.resize(dZLatDeg.size() * dZLonDeg.size(), FLT_MAX);
 	}
-	AnnounceEndBlock("Done");
 
-	// Subset the black marble
-	AnnounceStartBlock("Processing BlackMarble");
-	Announce("Reading image from disk");
-	PNGImage imgBlackMarble(strDataPath + std::string("/BlackMarble_2016_3km.png"));
+	size_t sZLat = dZLatDeg.size();
+	size_t sZLon = dZLonDeg.size();
 
-	Announce("Rescaling image");
-	PNGImage imgBlackMarbleSub;
+	double dZLatDegMin = dZLatDeg[0];
+	double dZLatDegMax = dZLatDeg[sZLat-1];
+	double dZLonDegMin = dZLonDeg[0];
+	double dZLonDegMax = dZLonDeg[sZLon-1];
 
-	{
-		int x1 = (dLonBegin + 180.0) / 360.0 * static_cast<double>(imgBlackMarble.width());
-		int x2 = (dLonEnd + 180.0) / 360.0 * static_cast<double>(imgBlackMarble.width());
-		int y1 = imgBlackMarble.height() - (dLatEnd + 90.0) / 180.0 * static_cast<double>(imgBlackMarble.height());
-		int y2 = imgBlackMarble.height() - (dLatBegin + 90.0) / 180.0 * static_cast<double>(imgBlackMarble.height());
-
-		if (y1 >= imgBlackMarble.height()) {
-			y1 = imgBlackMarble.height()-1;
-		}
-		if (y2 >= imgBlackMarble.height()) {
-			y2 = imgBlackMarble.height()-1;
-		}
-
-		imgBlackMarbleSub.from_subset(imgBlackMarble, x1, y1, x2, y2, nImageSizeX, nImageSizeY);
-	}
 	AnnounceEndBlock("Done");
 
 	// Initialize text renderer
@@ -539,8 +566,6 @@ try {
 	// Data buffer
 	std::vector<float> dataFLUT;
 	std::vector<float> dataSOLIN;
-	std::vector<float> dataU10;
-	std::vector<float> dataPRECT;
 
 	// ColorMap
 	ColorMapLibrary cmaplib(strDataPath);
@@ -560,10 +585,8 @@ try {
 	// Map
 	std::vector<size_t> vecMap(nImageSizeX * nImageSizeY);
 
-	int iGuamIx = 0;
-
 	// Load data longitude and latitude information
-	{
+	if (strPlotType == "DATA") {
 		AnnounceStartBlock("Building map");
 
 		// Open files
@@ -597,14 +620,7 @@ try {
 
 		// Allocate data
 		dataFLUT.resize(dDataLon.size());
-		dataSOLIN.resize(dDataLon.size());
 
-		if (strPlotType == "U10") {
-			dataU10.resize(dDataLon.size());
-		}
-		if (strPlotType == "PRECT") {
-			dataPRECT.resize(dDataLon.size());
-		}
 		// Create a new KD Tree containing all nodes
 		Announce("Building kdtree");
 
@@ -653,37 +669,105 @@ try {
 		AnnounceEndBlock("Done");
 	}
 
-	// Load data
+	// Loop through all input files
 	size_t sTimeIndex = 0;
 
 	for (size_t f = 0; f < vecInputFiles.size(); f++) {
 		AnnounceStartBlock("Processing file %lu/%lu", f, vecInputFiles.size());
 
 		// Open files
-		NcFileVector vecNcFiles;
-		vecNcFiles.ParseFromString(vecInputFiles[f]);
+		NcTimeDimension vecTimes;
+		if (vecInputFiles[f] != "!") {
+			NcFileVector vecNcFiles;
+			vecNcFiles.ParseFromString(vecInputFiles[f]);
 
-		// Get time information
-		const NcTimeDimension & vecTimes = vecNcFiles.GetNcTimeDimension(0);
-		if (vecTimes.size() == 0) {
-			_EXCEPTION1("Input file \"%s\" contains no time information",
-				 vecNcFiles.GetFilename(0).c_str());
-		}
+			// Get time information
+			vecTimes = vecNcFiles.GetNcTimeDimension(0);
+			if (vecTimes.size() == 0) {
+				_EXCEPTION1("Input file \"%s\" contains no time information",
+					 vecNcFiles.GetFilename(0).c_str());
+			}
 
-		if ((strPlotType == "FLUT") && (vecNcFiles.size() != 2)) {
-			_EXCEPTIONT("For --plot \"FLUT\" two input files must provide FLUT and SOLIN");
-		}
-		if ((strPlotType == "U10") && (vecNcFiles.size() != 3)) {
-			_EXCEPTIONT("For --plot \"U10\" three input files must provide FLUT, SOLIN and U10");
-		}
-		if ((strPlotType == "PRECT") && (vecNcFiles.size() != 3)) {
-			_EXCEPTIONT("For --plot \"PRECT\" three input files must provide FLUT, SOLIN and PRECT");
+		} else {
+			vecTimes.push_back(Time());
 		}
 
+		// Loop through all times
 		for (size_t t = 0; t < vecTimes.size(); t++) {
 			AnnounceStartBlock("Processing time %s", vecTimes[t].ToString().c_str());
 
-			// Load FLUT data
+			// Calculate gradients and draw background
+			for (size_t j = 0; j < nImageSizeY; j++) {
+				double dLatDeg = static_cast<double>(nImageSizeY - 1 - j) / static_cast<double>(nImageSizeY);
+				dLatDeg = dLatBegin + dLatDeg * (dLatEnd - dLatBegin);
+
+				int jZ = (dLatDeg - dZLatDegMin) / (dZLatDegMax - dZLatDegMin) * static_cast<double>(sZLat);
+
+				if (jZ < 0) {
+					jZ = 0;
+				}
+				if (jZ > sZLat-1) {
+					jZ = sZLat-1;
+				}
+
+				for (size_t i = 0; i < nImageSizeX; i++) {
+					size_t k = j * nImageSizeX + i;
+
+					double dLonDeg = static_cast<double>(i) / static_cast<double>(nImageSizeX);
+					dLonDeg = dLonBegin + dLonDeg * (dLonEnd - dLonBegin);
+
+					int iZ = (dLonDeg - dZLonDegMin) / (dZLonDegMax - dZLonDegMin) * static_cast<double>(sZLon);
+
+					if (iZ < 0) {
+						iZ += (1 - (iZ + 1) / sZLon) * sZLon;
+					}
+					if (iZ >= sZLon) {
+						iZ -= (iZ / sZLon) * sZLon;
+					}
+
+					int kZ = jZ * sZLon + iZ;
+
+					// Calculate derivative along light angle
+					if (dDZ[kZ] == FLT_MAX) {
+						int jZnext = jZ + nStencilWidth;
+						if (jZnext > sZLat-1) {
+							jZnext = sZLat-1;
+						}
+
+						int jZprev = jZ - nStencilWidth;
+						if (jZprev < 0) {
+							jZprev = 0;
+						}
+
+						int kZnext = jZnext * sZLon + iZ;
+						int kZprev = jZprev * sZLon + iZ;
+
+						double dDlatZ = (dZ[kZnext] - dZ[kZprev]) / (dZLatDeg[jZnext] - dZLatDeg[jZprev]);
+
+						int iZnext = (iZ + 1) % sZLon;
+						int iZprev = (iZ + sZLon - 1) % sZLon;
+
+						kZnext = jZ * sZLon + iZnext;
+						kZprev = jZ * sZLon + iZprev;
+
+						double dDlonZ = (dZ[kZnext] - dZ[kZprev]) / (dZLonDeg[iZnext] - dZLonDeg[iZprev]) / cos(DegToRad(dZLatDeg[jZ]));
+
+						dDZ[kZ] = - cos(dAngleRad) * dDlonZ - sin(dAngleRad) * dDlatZ;
+					}
+
+					double dGradZ = clamp(static_cast<double>(dDZ[kZ]), -dMaxScale, dMaxScale);
+					dGradZ = (dGradZ + dMaxScale) / (2.0 * dMaxScale);
+
+					//double dGradZ = clamp(dZ[kZ] / 4000.0f, 0.0f, 1.0f);
+
+					imgOut[4*k+0] = dGradZ * 255;
+					imgOut[4*k+1] = dGradZ * 255;
+					imgOut[4*k+2] = dGradZ * 255;
+					imgOut[4*k+3] = 255;
+				}
+			}
+/*
+			// Load data
 			NcVar * varFLUT = vecNcFiles[0]->get_var("FLUT");
 			if (varFLUT == NULL) {
 				_EXCEPTION1("File \"%s\" does not contain variable \"FLUT\"",
@@ -692,41 +776,8 @@ try {
 
 			varFLUT->set_cur(t,0);
 			varFLUT->get(&(dataFLUT[0]), 1, dataFLUT.size());
-
-			// Load SOLIN data
-			NcVar * varSOLIN = vecNcFiles[1]->get_var("SOLIN");
-			if (varSOLIN == NULL) {
-				_EXCEPTION1("File \"%s\" does not contain variable \"SOLIN\"",
-					vecNcFiles.GetFilename(1).c_str());
-			}
-
-			varSOLIN->set_cur(t,0);
-			varSOLIN->get(&(dataSOLIN[0]), 1, dataSOLIN.size());
-
-			// Load U10 data
-			if (strPlotType == "U10") {
-				NcVar * varU10 = vecNcFiles[2]->get_var("U10");
-				if (varU10 == NULL) {
-					_EXCEPTION1("File \"%s\" does not contain variable \"U10\"",
-						vecNcFiles.GetFilename(2).c_str());
-				}
-
-				varU10->set_cur(t,0);
-				varU10->get(&(dataU10[0]), 1, dataU10.size());
-			}
-
-			// Load PRECT data
-			if (strPlotType == "PRECT") {
-				NcVar * varPRECT = vecNcFiles[2]->get_var("PRECT");
-				if (varPRECT == NULL) {
-					_EXCEPTION1("File \"%s\" does not contain variable \"PRECT\"",
-						vecNcFiles.GetFilename(2).c_str());
-				}
-
-				varPRECT->set_cur(t,0);
-				varPRECT->get(&(dataPRECT[0]), 1, dataPRECT.size());
-			}
-
+*/
+/*
 			// Draw background
 			for (int i = 0; i < vecMap.size(); i++) {
 
@@ -736,56 +787,7 @@ try {
 				imgOut[4*i+1] = dIns * imgBlueMarbleSub[4*i+1] + (1.0 - dIns) * imgBlackMarbleSub[4*i+1];
 				imgOut[4*i+2] = dIns * imgBlueMarbleSub[4*i+2] + (1.0 - dIns) * imgBlackMarbleSub[4*i+2];
 				imgOut[4*i+3] = 255;
-/*
-			}
 
-			// Draw shadow
-			for (int i = 0; i < vecMap.size(); i++) {
-				int ix = i % nImageSizeX;
-				double dLonRad = static_cast<double>(ix) / static_cast<double>(nImageSizeX);
-				dLonRad = DegToRad(dLonBegin + dLonRad * (dLonEnd - dLonBegin));
-				dLonRad = LonRadToStandardRange(dLonRad);
-
-				double dOverheadTime = 86400.0 + 43200.0 * (1.0 + dLonRad / M_PI);
-
-				double dDeltaSecondsFromOverhead = fmod(dOverheadTime - vecTimes[t].GetSecond(), 86400.0);
-				if (dDeltaSecondsFromOverhead > 43200.0) {
-					dDeltaSecondsFromOverhead -= 86400.0;
-				}
-
-				if (fabs(dDeltaSecondsFromOverhead) < 21600.0) {
-					double dZenithAngle = asin(dDeltaSecondsFromOverhead / 21600.0);
-
-					if (i < nImageSizeX) {
-						printf("%i %f\n", ix, RadToDeg(dZenithAngle));
-					}
-
-					double dFLUT = clamp(dataFLUT[vecMap[i]], 80.0f, 300.0f);
-
-					double dAlpha;
-					if (dFLUT < 120.0) {
-						dAlpha = 1.0;
-					} else {
-						dAlpha = 0.2; // + 0.8 * (dFLUT - 120.0) / (300.0 - 120.0);
-					}
-
-					double dAngleFromOverhead = tan(0.5 * M_PI * dDeltaSecondsFromOverhead / 21600.0);
-					int id = 2; //static_cast<int>(dAngleFromOverhead);
-					//printf("%i %f\n", id, dAlpha);
-					if ((ix + id >= 0) && (ix + id < nImageSizeX)) {
-						imgOut[4*(i+id)+0] *= dAlpha;
-						imgOut[4*(i+id)+1] *= dAlpha;
-						imgOut[4*(i+id)+2] *= dAlpha;
-					}
-				}
-				//if (i < nImageSizeX) {
-				//	printf("%f %f %d %f\n", RadToDeg(dLonRad), dOverheadTime, vecTimes[t].GetSecond(), dDeltaSecondsFromOverhead);
-				//}
-			}
-
-			// Draw foreground
-			for (int i = 0; i < vecMap.size(); i++) {
-*/
 				double dFLUT = clamp(dataFLUT[vecMap[i]], 100.0f, 300.0f);
 
 				double dColor;
@@ -806,126 +808,8 @@ try {
 				imgOut[4*i+3] = 255;
 
 			}
-
-			// U10 plot
-			if (strPlotType == "U10") {
-				for (int i = 0; i < vecMap.size(); i++) {
-
-					imgOut[4*i+0] *= 0.4;
-					imgOut[4*i+1] *= 0.4;
-					imgOut[4*i+2] *= 0.4;
-
-					if (dataU10[vecMap[i]] > 10.0) {
-						double dU10 = clamp(dataU10[vecMap[i]] / 60.0, 0.0, 1.0);
-
-						unsigned char cR;
-						unsigned char cG;
-						unsigned char cB;
-
-						cmapJet.Sample(dU10, 0.0, 1.0, cR, cG, cB);
-
-						if (dataU10[vecMap[i]] < 20.0) {
-							double dA = (dataU10[vecMap[i]] - 10.0) / (20.0 - 10.0);
-							imgOut[4*i+0] = dA * cR + (1.0 - dA) * imgOut[4*i+0];
-							imgOut[4*i+1] = dA * cG + (1.0 - dA) * imgOut[4*i+1];
-							imgOut[4*i+2] = dA * cB + (1.0 - dA) * imgOut[4*i+2];
-						} else {
-							imgOut[4*i+0] = cR;
-							imgOut[4*i+1] = cG;
-							imgOut[4*i+2] = cB;
-						}
-					}
-				}
-			}
-
-			// PRECT plot
-			if (strPlotType == "PRECT") {
-				for (int i = 1; i < vecMap.size()-1; i++) {
-
-					imgOut[4*i+0] *= 0.4;
-					imgOut[4*i+1] *= 0.4;
-					imgOut[4*i+2] *= 0.4;
-
-					//double dPRECTmmhr = dataPRECT[vecMap[i]] / 2.778e-7;
-					double dPRECTmmhr = (0.2 * dataPRECT[vecMap[i-1]] + 0.6 * dataPRECT[vecMap[i]] + 0.2 * dataPRECT[vecMap[i]]) / 2.778e-7;
-
-					if (dPRECTmmhr > 1.0/24.0) {
-
-						unsigned char cR;
-						unsigned char cG;
-						unsigned char cB;
-
-						double dA;
-
-						if (dPRECTmmhr < 1.0) {
-							cR = 0; cG = 64; cB = 64; dA = 0.3;
-						} else if (dPRECTmmhr < 2.0) {
-							cR = 0; cG = 64; cB = 0; dA = 0.3;
-						} else if (dPRECTmmhr < 3.0) {
-							cR = 0; cG = 128; cB = 0; dA = 0.5;
-						} else if (dPRECTmmhr < 4.0) {
-							cR = 0; cG = 192; cB = 0; dA = 0.7;
-						} else if (dPRECTmmhr < 5.0) {
-							cR = 128; cG = 192; cB = 0; dA = 0.9;
-						} else if (dPRECTmmhr < 10.0) {
-							cR = 192; cG = 228; cB = 0; dA = 1.0;
-						} else if (dPRECTmmhr < 15.0) {
-							cR = 228; cG = 192; cB = 0; dA = 1.0;
-						} else if (dPRECTmmhr < 20.0) {
-							cR = 255; cG = 128; cB = 0; dA = 1.0;
-						} else if (dPRECTmmhr < 35.0) {
-							cR = 192; cG = 64; cB = 0; dA = 1.0;
-						} else if (dPRECTmmhr < 50.0) {
-							cR = 128; cG = 0; cB = 0; dA = 1.0;
-						} else if (dPRECTmmhr < 75.0) {
-							cR = 192; cG = 0; cB = 0; dA = 1.0;
-						} else if (dPRECTmmhr < 100.0) {
-							cR = 255; cG = 0; cB = 255; dA = 1.0;
-						} else if (dPRECTmmhr < 150.0) {
-							cR = 128; cG = 0; cB = 192; dA = 1.0;
-						} else {
-							cR = 240; cG = 240; cB = 240; dA = 1.0;
-						}
-
-						imgOut[4*i+0] = dA * cR + (1.0 - dA) * imgOut[4*i+0];
-						imgOut[4*i+1] = dA * cG + (1.0 - dA) * imgOut[4*i+1];
-						imgOut[4*i+2] = dA * cB + (1.0 - dA) * imgOut[4*i+2];
-					}
-				}
-			}
-/*
-			// Add text
-			Time timeGuam = vecTimes[t];
-			timeGuam.AddSeconds(10 * 3600);
-
-			sctext.DrawString(
-				timeGuam.ToString() + std::string(" (GMT+10)"),
-				10,
-				nImageSizeY-12,
-				SchriftText::TextAlignment_Left,
-				nImageSizeX,
-				nImageSizeY,
-				&(imgOut[0]),
-				SchriftText::RGBA());
-
-			// Add Guam
-			int iGuamX = nImageSizeX * (144.794 - LonDegToStandardRange(dLonBegin)) / (LonDegToStandardRange(dLonEnd) - LonDegToStandardRange(dLonBegin));
-			int iGuamY = nImageSizeY - 1 - nImageSizeY * (13.444 - dLatBegin) / (dLatEnd - dLatBegin);
-			int iGuamIx = nImageSizeX * iGuamY + iGuamX;
-
-			sctext.DrawCharacter(
-				'+',
-				iGuamX-5,
-				iGuamY+6,
-				nImageSizeX,
-				nImageSizeY,
-				&(imgOut[0]),
-				SchriftText::RGBA(192,0,0));
-
-			imgOut[4*iGuamIx+0] = 255;
-			imgOut[4*iGuamIx+1] = 0;
-			imgOut[4*iGuamIx+2] = 0;
 */
+			// Draw shapefiles
 			if (strShapefile != "") {
 				DrawMesh(
 					meshShp,

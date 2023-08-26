@@ -18,6 +18,7 @@ FILES= Announce.cpp \
 	   DataOp.cpp \
        kdtree.cpp \
 	   lodepng.cpp \
+	   schrift.cpp \
 	   SimpleGrid.cpp \
 	   GridElements.cpp \
 	   FiniteElementTools.cpp \

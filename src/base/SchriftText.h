@@ -18,6 +18,7 @@
 #define _SCHRIFTTEXT_H_
 
 #include "schrift.h"
+#include "RGBA.h"
 
 #include <string>
 
@@ -30,71 +31,6 @@ public:
 	///		Number of bytes per pixel in image buffer.
 	///	</summary>
 	static const int NDIM = 4;
-
-public:
-	///	<summary>
-	///		A class holding a RGBA color.
-	///	</summary>
-	class RGBA {
-		public:
-			///	<summary>
-			///		Default constructor.
-			///	</summary>
-			RGBA() {
-				color = 0xFFFFFFFFu;
-			}
-
-			///	<summary>
-			///		Constructor from integers.
-			///	</summary>
-			RGBA(
-				unsigned int iR,
-				unsigned int iG,
-				unsigned int iB,
-				unsigned int iA = 255
-			) {
-				iR = iR % 256;
-				iG = iG % 256;
-				iB = iB % 256;
-				iA = iA % 256;
-
-				color = (iR << 24) | (iG << 16) | (iB << 8) | iA;
-			}
-
-			///	<summary>
-			///		Red accessor.
-			///	</summary>
-			inline unsigned char r() const {
-				return static_cast<unsigned char>((color & 0xFF000000u) >> 24);
-			}
-
-			///	<summary>
-			///		Green accessor.
-			///	</summary>
-			inline unsigned char g() const {
-				return static_cast<unsigned char>((color & 0x00FF0000u) >> 16);
-			}
-
-			///	<summary>
-			///		Blue accessor.
-			///	</summary>
-			inline unsigned char b() const {
-				return static_cast<unsigned char>((color & 0x0000FF00u) >> 8);
-			}
-
-			///	<summary>
-			///		Alpha accessor.
-			///	</summary>
-			inline unsigned char a() const {
-				return static_cast<unsigned char>(color & 0x000000FFu);
-			}
-
-		private:
-			///	<summary>
-			///		Structure holding the color.
-			///	</summary>
-			uint32_t color;
-	};
 
 public:
 	///	<summary>

@@ -69,308 +69,6 @@ void RealCoordToImageCoord(
 
 ///////////////////////////////////////////////////////////////////////////////
 
-void DrawMesh(
-	Mesh & meshShp,
-	double dLatBegin,
-	double dLatEnd,
-	double dLonBegin,
-	double dLonEnd,
-	PNGImage & imgOut,
-	std::vector<RGBA> * pvecOutlGRBA = NULL,
-	std::vector<RGBA> * pvecFillRGBA = NULL
-) {
-	int nImageSizeX = imgOut.width();
-	int nImageSizeY = imgOut.height();
-
-	for (size_t f = 0; f < meshShp.faces.size(); f++) {
-		const Face & face = meshShp.faces[f];
-		if (face.edges.size() == 0) {
-			continue;
-		}
-
-		// Convert edges to image coords
-		std::vector<int> vecX;
-		std::vector<int> vecY;
-		vecX.reserve(face.edges.size());
-		vecY.reserve(face.edges.size());
-
-		for (int i = 0; i < face.edges.size(); i++) {
-			double dLatDeg;
-			double dLonDeg;
-
-			XYZtoRLL_Deg(
-				meshShp.nodes[face[i]].x,
-				meshShp.nodes[face[i]].y,
-				meshShp.nodes[face[i]].z,
-				dLonDeg,
-				dLatDeg);
-
-			int iX, iY;
-
-			RealCoordToImageCoord(
-				dLatDeg, dLonDeg,
-				dLatBegin, dLonBegin,
-				dLatEnd, dLonEnd,
-				nImageSizeX, nImageSizeY,
-				iX, iY);
-
-			if (i != 0) {
-				size_t sLast = vecX.size()-1;
-				if ((vecX[sLast] != iX) || (vecY[sLast] != iY)) {
-					vecX.push_back(iX);
-					vecY.push_back(iY);
-				}
-			} else {
-				vecX.push_back(iX);
-				vecY.push_back(iY);
-			}
-		}
-
-		// Draw fill
-		if (pvecFillRGBA != NULL) {
-			unsigned char cRf = 255;
-			unsigned char cGf = 255;
-			unsigned char cBf = 255;
-			unsigned char cAf = 0;
-
-			if (pvecFillRGBA->size() == meshShp.faces.size()) {
-				cRf = (*pvecFillRGBA)[f].r();
-				cGf = (*pvecFillRGBA)[f].g();
-				cBf = (*pvecFillRGBA)[f].b();
-				cAf = (*pvecFillRGBA)[f].a();
-
-			} else if (pvecFillRGBA->size() == 1) {
-				cRf = (*pvecFillRGBA)[0].r();
-				cGf = (*pvecFillRGBA)[0].g();
-				cBf = (*pvecFillRGBA)[0].b();
-				cAf = (*pvecFillRGBA)[0].a();
-
-			} else if (pvecFillRGBA->size() == 0) {
-				cRf = 255;
-				cGf = 255;
-				cBf = 255;
-				cAf = 255;
-
-			} else {
-				_EXCEPTION1("Anomalous pvecFillRGBA array size (%lu)", pvecFillRGBA->size());
-			}
-
-			if (cAf != 0) {
-				double dAf = static_cast<double>(cAf) / 255.0;
-
-				// Get the polygon bounds
-				int iMinX = vecX[0];
-				int iMaxX = vecX[0];
-
-				int iMinY = vecY[0];
-				int iMaxY = vecY[0];
-
-				for (int i = 0; i < vecX.size(); i++) {
-					if (vecX[i] < iMinX) {
-						iMinX = vecX[i];
-					}
-					if (vecX[i] > iMaxX) {
-						iMaxX = vecX[i];
-					}
-					if (vecY[i] < iMinY) {
-						iMinY = vecY[i];
-					}
-					if (vecY[i] > iMaxY) {
-						iMaxY = vecY[i];
-					}
-				}
-
-				// Draw pixels
-				if ((iMinX >= 0) && (iMaxX < nImageSizeX) && (iMinY >= 0) && (iMaxY < nImageSizeY)) {
-/*
-					if (f == 807) {
-						for (int v = 0; v < vecX.size(); v++) {
-							printf("%i %i\n", vecX[v], vecY[v]);
-						}
-					}
-*/
-					//printf("%i %i %i %i\n", iMinX, iMaxX, iMinY, iMaxY);
-					for (int j = iMinY; j <= iMaxY; j++) {
-/*
-						if (f != 807) {
-							continue;
-						}
-*/
-						std::vector<int> nPosParity(iMaxX - iMinX + 1, 0);
-						std::vector<int> nNegParity(iMaxX - iMinX + 1, 0);
-						for (size_t v1 = 0; v1 < vecX.size(); v1++) {
-							size_t v2 = (v1 + 1) % vecX.size();
-							if (vecY[v1] == vecY[v2]) {
-								continue;
-							}
-
-							if (vecY[v2] > vecY[v1]) {
-								if ((j > vecY[v2]) || (j < vecY[v1])) {
-									continue;
-								}
-								if (j == vecY[v1]) {
-									nPosParity[vecX[v1] - iMinX]++;
-									continue;
-								}
-								if (j == vecY[v2]) {
-									nPosParity[vecX[v2] - iMinX]++;
-									continue;
-								}
-
-								int ix = ((vecX[v2] - vecX[v1]) * (j - vecY[v1])) / (vecY[v2] - vecY[v1]) + vecX[v1] - iMinX;
-								_ASSERT((ix >= 0) && (ix < nPosParity.size()));
-								nPosParity[ix] += 2;
-
-							} else {
-								if ((j > vecY[v1]) || (j < vecY[v2])) {
-									continue;
-								}
-								if (j == vecY[v1]) {
-									nNegParity[vecX[v1] - iMinX]++;
-									continue;
-								}
-								if (j == vecY[v2]) {
-									nNegParity[vecX[v2] - iMinX]++;
-									continue;
-								}
-
-								int ix = ((vecX[v2] - vecX[v1]) * (j - vecY[v1])) / (vecY[v2] - vecY[v1]) + vecX[v1] - iMinX;
-								_ASSERT((ix >= 0) && (ix < nPosParity.size()));
-								nNegParity[ix] += 2;
-							}
-						}
-/*
-						printf("%i: ", j);
-						for (int v = 0; v < nPosParity.size(); v++) {
-							printf("(%i,%i) ", nPosParity[v], nNegParity[v]);
-						}
-						printf("\n");
-*/
-						int iParity = 0;
-						for (int i = iMinX; i <= iMaxX; i++) {
-							iParity += nPosParity[i-iMinX];
-
-							if (iParity > 0) {
-								int kx = j * nImageSizeX + i;
-								imgOut[4*kx+0] = dAf * cRf + (1.0 - dAf) * imgOut[4*kx+0];
-								imgOut[4*kx+1] = dAf * cGf + (1.0 - dAf) * imgOut[4*kx+1];
-								imgOut[4*kx+2] = dAf * cBf + (1.0 - dAf) * imgOut[4*kx+2];
-							}
-
-							iParity -= nNegParity[i-iMinX];
-/*
-							if (iParity < 0) {
-								_EXCEPTION1("Error in face %i", f);
-							}
-*/
-							//_ASSERT(iParity >= 0);
-						}
-					}
-/*
-					if (f == 807) {
-						_EXCEPTION();
-					}
-*/
-				}
-			}
-		}
-
-		// Outline color
-		unsigned char cRo = 255;
-		unsigned char cGo = 255;
-		unsigned char cBo = 255;
-		unsigned char cAo = 255;
-
-		if (pvecOutlGRBA != NULL) {
-			if (pvecOutlGRBA->size() == meshShp.faces.size()) {
-				cRo = (*pvecOutlGRBA)[f].r();
-				cGo = (*pvecOutlGRBA)[f].g();
-				cBo = (*pvecOutlGRBA)[f].b();
-				cAo = (*pvecOutlGRBA)[f].a();
-
-			} else if (pvecOutlGRBA->size() == 1) {
-				cRo = (*pvecOutlGRBA)[0].r();
-				cGo = (*pvecOutlGRBA)[0].g();
-				cBo = (*pvecOutlGRBA)[0].b();
-				cAo = (*pvecOutlGRBA)[0].a();
-
-			} else if (pvecOutlGRBA->size() == 0) {
-				cRo = 255;
-				cGo = 255;
-				cBo = 255;
-				cAo = 255;
-
-			} else {
-				_EXCEPTION1("Anomalous pvecOutlGRBA array size (%lu)", pvecOutlGRBA->size());
-			}
-		}
-
-		// Draw outline
-		if (cAo != 0) {
-			double dAo = static_cast<double>(cAo) / 255.0;
-
-			int iXprev = 0;
-			int iYprev = 0;
-
-			int iXnext = vecX[0];
-			int iYnext = vecY[0];
-
-			for (size_t v = 1; v < vecX.size(); v++) {
-				iXprev = iXnext;
-				iYprev = iYnext;
-
-				iXnext = vecX[v];
-				iYnext = vecY[v];
-
-				int nDistX = abs(iXnext - iXprev);
-				int nDistY = abs(iYnext - iYprev);
-
-				int nDistMax = nDistX;
-				if (nDistY > nDistX) {
-					nDistMax = nDistY;
-				}
-				if (nDistMax > 0.8 * nImageSizeX) {
-					continue;
-				}
-
-				double dXstep = static_cast<double>(iXnext - iXprev) / static_cast<double>(nDistMax);
-				double dYstep = static_cast<double>(iYnext - iYprev) / static_cast<double>(nDistMax);
-
-				for (int i = 0; i < nDistMax; i+=1) {
-					int iXcoord = iXprev + static_cast<int>(dXstep * i);
-					int iYcoord = iYprev + static_cast<int>(dYstep * i);
-
-					if ((iXcoord >= 0) && (iXcoord < nImageSizeX) && (iYcoord >= 0) && (iYcoord < nImageSizeY)) {
-						size_t ix = iXcoord;
-						size_t jx = iYcoord;
-
-						int kx = nImageSizeX * jx + ix;
-						imgOut[4*kx+0] = dAo * cRo + (1.0 - dAo) * imgOut[4*kx+0];
-						imgOut[4*kx+1] = dAo * cGo + (1.0 - dAo) * imgOut[4*kx+1];
-						imgOut[4*kx+2] = dAo * cBo + (1.0 - dAo) * imgOut[4*kx+2];
-
-						if (ix != 0) {
-							int kx = nImageSizeX * jx + ix-1;
-							imgOut[4*kx+0] = dAo * (0.5 * cRo + 0.5 * imgOut[4*kx+0]) + (1.0 - dAo) * imgOut[4*kx+0];
-							imgOut[4*kx+1] = dAo * (0.5 * cGo + 0.5 * imgOut[4*kx+1]) + (1.0 - dAo) * imgOut[4*kx+1];
-							imgOut[4*kx+2] = dAo * (0.5 * cBo + 0.5 * imgOut[4*kx+2]) + (1.0 - dAo) * imgOut[4*kx+2];
-						}
-
-						if (jx != 0) {
-							int kx = nImageSizeX * (jx-1) + ix;
-							imgOut[4*kx+0] = dAo * (0.5 * cRo + 0.5 * imgOut[4*kx+0]) + (1.0 - dAo) * imgOut[4*kx+0];
-							imgOut[4*kx+1] = dAo * (0.5 * cGo + 0.5 * imgOut[4*kx+1]) + (1.0 - dAo) * imgOut[4*kx+1];
-							imgOut[4*kx+2] = dAo * (0.5 * cBo + 0.5 * imgOut[4*kx+2]) + (1.0 - dAo) * imgOut[4*kx+2];
-						}
-					}
-				}
-			}
-		}
-	}
-}
-
-///////////////////////////////////////////////////////////////////////////////
-
 int main(int argc, char** argv) {
 
 // Turn off fatal errors in NetCDF
@@ -437,9 +135,7 @@ try {
 		CommandLineString(strLatitudeName, "latname", "lat");
 		CommandLineString(strLongitudeName, "lonname", "lon");
 		CommandLineString(strDataPath, "datapath", strDataPath.c_str());
-		CommandLineStringD(strPlotType, "plot", "FLUT", "(FLUT|U10|PRECT)");
-		CommandLineString(strShapefile, "shp", "");
-		CommandLineString(strShapefile2, "shp2", "");
+		CommandLineStringD(strPlotType, "plot", "COD", "(COD|ALLSKY|PRECT)");
 
 		ParseCommandLine(argc, argv);
 	EndCommandLine(argv)
@@ -468,8 +164,8 @@ try {
 	if ((dLatEnd < -90.0) || (dLatEnd > 90.0)) {
 		_EXCEPTIONT("--lat_end must be in the range [-90.0, 90.0]");
 	}
-	if ((strPlotType != "FLUT") && (strPlotType != "U10") && (strPlotType != "PRECT")) {
-		_EXCEPTIONT("--plot must be one of \"FLUT\", \"U10\" or \"PRECT\"");
+	if ((strPlotType != "COD") && (strPlotType != "ALLSKY") && (strPlotType != "PRECT")) {
+		_EXCEPTIONT("--plot must be one of \"COD\", \"ALLSKY\" or \"PRECT\"");
 	}
 
 	// Load input file list
@@ -486,7 +182,7 @@ try {
 	// Subset the blue marble
 	AnnounceStartBlock("Processing BlueMarble");
 	Announce("Reading image from disk");
-	PNGImage imgBlueMarble(strDataPath + std::string("/BlueMarble_June2004_3km.png"));
+	PNGImage imgBlueMarble(strDataPath + std::string("/BlueMarble_May2004_3km_notopo.png"));
 
 	Announce("Rescaling image");
 	PNGImage imgBlueMarbleSub;
@@ -537,9 +233,9 @@ try {
 	SchriftText sctext(strDataPath + std::string("/Ubuntu-Regular.ttf"), 18.0);
 
 	// Data buffer
-	std::vector<float> dataFLUT;
+	std::vector<float> dataCOD;
 	std::vector<float> dataSOLIN;
-	std::vector<float> dataU10;
+	std::vector<float> dataALLSKY;
 	std::vector<float> dataPRECT;
 
 	// ColorMap
@@ -596,11 +292,11 @@ try {
 		_ASSERT(dDataLon.size() == dDataLat.size());
 
 		// Allocate data
-		dataFLUT.resize(dDataLon.size());
+		dataCOD.resize(dDataLon.size());
 		dataSOLIN.resize(dDataLon.size());
 
-		if (strPlotType == "U10") {
-			dataU10.resize(dDataLon.size());
+		if (strPlotType == "ALLSKY") {
+			dataALLSKY.resize(dDataLon.size());
 		}
 		if (strPlotType == "PRECT") {
 			dataPRECT.resize(dDataLon.size());
@@ -670,49 +366,49 @@ try {
 				 vecNcFiles.GetFilename(0).c_str());
 		}
 
-		if ((strPlotType == "FLUT") && (vecNcFiles.size() != 2)) {
-			_EXCEPTIONT("For --plot \"FLUT\" two input files must provide FLUT and SOLIN");
+		if ((strPlotType == "COD") && (vecNcFiles.size() != 1)) {
+			_EXCEPTIONT("For --plot \"COD\" one input file must provide COD and SOLIN");
 		}
-		if ((strPlotType == "U10") && (vecNcFiles.size() != 3)) {
-			_EXCEPTIONT("For --plot \"U10\" three input files must provide FLUT, SOLIN and U10");
+		if ((strPlotType == "ALLSKY") && (vecNcFiles.size() != 1)) {
+			_EXCEPTIONT("For --plot \"ALLSKY\" one input file must provide COD, SOLIN and ALLSKY");
 		}
 		if ((strPlotType == "PRECT") && (vecNcFiles.size() != 3)) {
-			_EXCEPTIONT("For --plot \"PRECT\" three input files must provide FLUT, SOLIN and PRECT");
+			_EXCEPTIONT("For --plot \"PRECT\" three input files must provide COD, SOLIN and PRECT");
 		}
 
 		for (size_t t = 0; t < vecTimes.size(); t++) {
 			AnnounceStartBlock("Processing time %s", vecTimes[t].ToString().c_str());
 
-			// Load FLUT data
-			NcVar * varFLUT = vecNcFiles[0]->get_var("FLUT");
-			if (varFLUT == NULL) {
-				_EXCEPTION1("File \"%s\" does not contain variable \"FLUT\"",
+			// Load COD data
+			NcVar * varCOD = vecNcFiles[0]->get_var("cod");
+			if (varCOD == NULL) {
+				_EXCEPTION1("File \"%s\" does not contain variable \"cod\"",
 					vecNcFiles.GetFilename(0).c_str());
 			}
 
-			varFLUT->set_cur(t,0);
-			varFLUT->get(&(dataFLUT[0]), 1, dataFLUT.size());
+			varCOD->set_cur(t,0);
+			varCOD->get(&(dataCOD[0]), 1, dataCOD.size());
 
 			// Load SOLIN data
-			NcVar * varSOLIN = vecNcFiles[1]->get_var("SOLIN");
+			NcVar * varSOLIN = vecNcFiles[0]->get_var("SOLIN");
 			if (varSOLIN == NULL) {
 				_EXCEPTION1("File \"%s\" does not contain variable \"SOLIN\"",
-					vecNcFiles.GetFilename(1).c_str());
+					vecNcFiles.GetFilename(0).c_str());
 			}
 
 			varSOLIN->set_cur(t,0);
 			varSOLIN->get(&(dataSOLIN[0]), 1, dataSOLIN.size());
 
-			// Load U10 data
-			if (strPlotType == "U10") {
-				NcVar * varU10 = vecNcFiles[2]->get_var("U10");
-				if (varU10 == NULL) {
-					_EXCEPTION1("File \"%s\" does not contain variable \"U10\"",
-						vecNcFiles.GetFilename(2).c_str());
+			// Load AI_ALLSKY data
+			if (strPlotType == "ALLSKY") {
+				NcVar * varALLSKY = vecNcFiles[0]->get_var("AI_ALLSKY");
+				if (varALLSKY == NULL) {
+					_EXCEPTION1("File \"%s\" does not contain variable \"AI_ALLSKY\"",
+						vecNcFiles.GetFilename(0).c_str());
 				}
 
-				varU10->set_cur(t,0);
-				varU10->get(&(dataU10[0]), 1, dataU10.size());
+				varALLSKY->set_cur(t,0);
+				varALLSKY->get(&(dataALLSKY[0]), 1, dataALLSKY.size());
 			}
 
 			// Load PRECT data
@@ -730,73 +426,27 @@ try {
 			// Draw background
 			for (int i = 0; i < vecMap.size(); i++) {
 
-				double dIns = 0.7; //sqrt(clamp(dataSOLIN[vecMap[i]] / 1360.0, 0.0, 1.0));
+				double dIns = 1.0; //sqrt(clamp(dataSOLIN[vecMap[i]] / 1360.0, 0.0, 1.0));
 
 				imgOut[4*i+0] = dIns * imgBlueMarbleSub[4*i+0] + (1.0 - dIns) * imgBlackMarbleSub[4*i+0];
 				imgOut[4*i+1] = dIns * imgBlueMarbleSub[4*i+1] + (1.0 - dIns) * imgBlackMarbleSub[4*i+1];
 				imgOut[4*i+2] = dIns * imgBlueMarbleSub[4*i+2] + (1.0 - dIns) * imgBlackMarbleSub[4*i+2];
 				imgOut[4*i+3] = 255;
-/*
-			}
 
-			// Draw shadow
-			for (int i = 0; i < vecMap.size(); i++) {
-				int ix = i % nImageSizeX;
-				double dLonRad = static_cast<double>(ix) / static_cast<double>(nImageSizeX);
-				dLonRad = DegToRad(dLonBegin + dLonRad * (dLonEnd - dLonBegin));
-				dLonRad = LonRadToStandardRange(dLonRad);
-
-				double dOverheadTime = 86400.0 + 43200.0 * (1.0 + dLonRad / M_PI);
-
-				double dDeltaSecondsFromOverhead = fmod(dOverheadTime - vecTimes[t].GetSecond(), 86400.0);
-				if (dDeltaSecondsFromOverhead > 43200.0) {
-					dDeltaSecondsFromOverhead -= 86400.0;
-				}
-
-				if (fabs(dDeltaSecondsFromOverhead) < 21600.0) {
-					double dZenithAngle = asin(dDeltaSecondsFromOverhead / 21600.0);
-
-					if (i < nImageSizeX) {
-						printf("%i %f\n", ix, RadToDeg(dZenithAngle));
-					}
-
-					double dFLUT = clamp(dataFLUT[vecMap[i]], 80.0f, 300.0f);
-
-					double dAlpha;
-					if (dFLUT < 120.0) {
-						dAlpha = 1.0;
-					} else {
-						dAlpha = 0.2; // + 0.8 * (dFLUT - 120.0) / (300.0 - 120.0);
-					}
-
-					double dAngleFromOverhead = tan(0.5 * M_PI * dDeltaSecondsFromOverhead / 21600.0);
-					int id = 2; //static_cast<int>(dAngleFromOverhead);
-					//printf("%i %f\n", id, dAlpha);
-					if ((ix + id >= 0) && (ix + id < nImageSizeX)) {
-						imgOut[4*(i+id)+0] *= dAlpha;
-						imgOut[4*(i+id)+1] *= dAlpha;
-						imgOut[4*(i+id)+2] *= dAlpha;
-					}
-				}
-				//if (i < nImageSizeX) {
-				//	printf("%f %f %d %f\n", RadToDeg(dLonRad), dOverheadTime, vecTimes[t].GetSecond(), dDeltaSecondsFromOverhead);
-				//}
-			}
-
-			// Draw foreground
-			for (int i = 0; i < vecMap.size(); i++) {
-*/
-				double dFLUT = clamp(dataFLUT[vecMap[i]], 100.0f, 300.0f);
+				// Draw COD
+				double dCOD = clamp(dataCOD[vecMap[i]], 0.0f, 40.0f);
 
 				double dColor;
 				double dAlpha;
-				if (dFLUT < 160.0) {
+				if (dCOD > 40.0) {
 					dAlpha = 1.0;
-					dColor = 0.7 + 0.2 * (160.0 - dFLUT) / (160.0 - 100.0);
+					dColor = 1.0;
 				} else {
-					dAlpha = 1.0 - (dFLUT - 160.0) / (300.0 - 160.0);
-					dColor = 0.5 + 0.2 * (300.0 - dFLUT) / (300.0 - 160.0);
+					dAlpha = dCOD / 40.0;
+					dColor = 0.7 + 0.3 * dCOD / 40.0;
 				}
+
+				dColor -= 0.5 * (1.0 - dIns);
 
 				char cColor = static_cast<char>(255.0 * dColor);
 
@@ -807,34 +457,21 @@ try {
 
 			}
 
-			// U10 plot
-			if (strPlotType == "U10") {
+			// ALLSKY plot
+			if (strPlotType == "ALLSKY") {
 				for (int i = 0; i < vecMap.size(); i++) {
 
-					imgOut[4*i+0] *= 0.4;
-					imgOut[4*i+1] *= 0.4;
-					imgOut[4*i+2] *= 0.4;
+					double dALLSKY = clamp(dataALLSKY[vecMap[i]] / 0.8, 0.0, 1.0);
 
-					if (dataU10[vecMap[i]] > 10.0) {
-						double dU10 = clamp(dataU10[vecMap[i]] / 60.0, 0.0, 1.0);
+					unsigned char cR = 218;
+					unsigned char cG = 96;
+					unsigned char cB = 12;
 
-						unsigned char cR;
-						unsigned char cG;
-						unsigned char cB;
+					double dAlpha = dALLSKY;
 
-						cmapJet.Sample(dU10, 0.0, 1.0, cR, cG, cB);
-
-						if (dataU10[vecMap[i]] < 20.0) {
-							double dA = (dataU10[vecMap[i]] - 10.0) / (20.0 - 10.0);
-							imgOut[4*i+0] = dA * cR + (1.0 - dA) * imgOut[4*i+0];
-							imgOut[4*i+1] = dA * cG + (1.0 - dA) * imgOut[4*i+1];
-							imgOut[4*i+2] = dA * cB + (1.0 - dA) * imgOut[4*i+2];
-						} else {
-							imgOut[4*i+0] = cR;
-							imgOut[4*i+1] = cG;
-							imgOut[4*i+2] = cB;
-						}
-					}
+					imgOut[4*i+0] = dAlpha * cR + (1.0 - dAlpha) * imgOut[4*i+0];
+					imgOut[4*i+1] = dAlpha * cG + (1.0 - dAlpha) * imgOut[4*i+1];
+					imgOut[4*i+2] = dAlpha * cB + (1.0 - dAlpha) * imgOut[4*i+2];
 				}
 			}
 
@@ -893,21 +530,20 @@ try {
 					}
 				}
 			}
-/*
+
 			// Add text
-			Time timeGuam = vecTimes[t];
-			timeGuam.AddSeconds(10 * 3600);
+			Time timeGMT = vecTimes[t];
 
 			sctext.DrawString(
-				timeGuam.ToString() + std::string(" (GMT+10)"),
+				timeGMT.ToString() + std::string(" (GMT)"),
 				10,
 				nImageSizeY-12,
 				SchriftText::TextAlignment_Left,
 				nImageSizeX,
 				nImageSizeY,
 				&(imgOut[0]),
-				SchriftText::RGBA());
-
+				RGBA());
+/*
 			// Add Guam
 			int iGuamX = nImageSizeX * (144.794 - LonDegToStandardRange(dLonBegin)) / (LonDegToStandardRange(dLonEnd) - LonDegToStandardRange(dLonBegin));
 			int iGuamY = nImageSizeY - 1 - nImageSizeY * (13.444 - dLatBegin) / (dLatEnd - dLatBegin);
@@ -926,60 +562,6 @@ try {
 			imgOut[4*iGuamIx+1] = 0;
 			imgOut[4*iGuamIx+2] = 0;
 */
-			if (strShapefile != "") {
-				DrawMesh(
-					meshShp,
-					dLatBegin,
-					dLatEnd,
-					dLonBegin,
-					dLonEnd,
-					imgOut);
-			}
-			if (strShapefile2 != "") {
-				std::vector<RGBA> vecOutlGRBA(meshShp2.faces.size());
-				std::vector<RGBA> vecFillRGBA(meshShp2.faces.size());
-				double dPx, dPy, dPz;
-				RLLtoXYZ_Deg(-75.16, 39.95, dPx, dPy, dPz);
-
-				for (int f = 0; f < meshShp2.faces.size(); f++) {
-					double dGCD = GreatCircleDistanceXYZ_Deg(
-						meshShp2.nodes[meshShp2.faces[f][0]].x,
-						meshShp2.nodes[meshShp2.faces[f][0]].y,
-						meshShp2.nodes[meshShp2.faces[f][0]].z,
-						dPx,
-						dPy,
-						dPz
-					);
-
-					if (dGCD > 3.0) {
-						vecOutlGRBA[f] = RGBA(127, 127, 127, 64);
-						vecFillRGBA[f] = RGBA(0, 0, 0, 0);
-
-					} else if (dGCD > 2.0) {
-						vecOutlGRBA[f] = RGBA(216, 216, 0, 128);
-						vecFillRGBA[f] = RGBA(108, 108, 0, 64);
-
-					} else if (dGCD > 1.0) {
-						vecOutlGRBA[f] = RGBA(216, 128, 0, 192);
-						vecFillRGBA[f] = RGBA(108, 64, 0, 96);
-
-					} else {
-						vecOutlGRBA[f] = RGBA(216, 0, 0, 255);
-						vecFillRGBA[f] = RGBA(108, 0, 0, 128);
-					}
-				}
-
-				DrawMesh(
-					meshShp2,
-					dLatBegin,
-					dLatEnd,
-					dLonBegin,
-					dLonEnd,
-					imgOut,
-					&vecOutlGRBA,
-					&vecFillRGBA);
-			}
-
 			// Output file
 			char szBuffer[32];
 			std::string strOutputFilename = strOutputRoot;

@@ -17,7 +17,9 @@ TEMPESTVISNETCDFDIR= $(TEMPESTVISDIR)/src/netcdf-cxx-4.2
 TEMPESTVISNETCDFLIB= $(TEMPESTVISNETCDFDIR)/libnetcdf_c++.a
 
 EXEC_FILES= RenderTC.cpp \
-            RenderTCSnapshot.cpp
+            RenderTCSnapshot.cpp \
+			RenderAerosol.cpp \
+			TopographyMap.cpp
 
 EXEC_TARGETS= $(EXEC_FILES:%.cpp=%)
 
