@@ -140,6 +140,20 @@ public:
 		return m_vecFileType[pos];
 	}
 
+	///	<summary>
+	///		Get the NcFileVector as a string.
+	///	</summary>
+	std::string ToString() const {
+		std::string strNcFileVectorString;
+		for (size_t f = 0; f < m_vecFilenames.size(); f++) {
+			strNcFileVectorString += m_vecFilenames[f];
+			if (f != m_vecFilenames.size()-1) {
+				strNcFileVectorString += ";";
+			}
+		}
+		return strNcFileVectorString;
+	}
+
 public:
 	///	<summary>
 	///		Get the Time used to construct this NcFileVector.

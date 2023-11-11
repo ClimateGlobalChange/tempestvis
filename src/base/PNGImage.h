@@ -71,6 +71,13 @@ public:
 	);
 
 	///	<summary>
+	///		Apply another PNG as an overlay.
+	///	</summary>
+	void overlay(
+		const PNGImage & img
+	);
+
+	///	<summary>
 	///		Get the image width.
 	///	</summary>
 	unsigned int width() const {

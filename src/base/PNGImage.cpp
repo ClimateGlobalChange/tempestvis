@@ -183,3 +183,24 @@ void PNGImage::from_subset(
 
 ///////////////////////////////////////////////////////////////////////////////
 
+void PNGImage::overlay(
+	const PNGImage & img
+) {
+	if ((width() != img.width()) || (height() != img.height())) {
+		_EXCEPTIONT("Overlay PNGImage must have the same dimensions as the target");
+	}
+
+	size_t sTotalSize = width() * height();
+
+	for (size_t i = 0; i < sTotalSize; i++) {
+		unsigned int alpha = img[4*i+3] + 1;
+		unsigned int inv_alpha = 256 - img[4*i+3];
+
+		(*this)[4*i+0] = (unsigned char)((alpha * img[4*i+0] + inv_alpha * (*this)[4*i+0]) >> 8);
+		(*this)[4*i+1] = (unsigned char)((alpha * img[4*i+1] + inv_alpha * (*this)[4*i+1]) >> 8);
+		(*this)[4*i+2] = (unsigned char)((alpha * img[4*i+2] + inv_alpha * (*this)[4*i+2]) >> 8);
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////////
+

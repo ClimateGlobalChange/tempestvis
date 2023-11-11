@@ -76,11 +76,14 @@ void DrawMesh(
 	double dLonBegin,
 	double dLonEnd,
 	PNGImage & imgOut,
-	std::vector<RGBA> * pvecOutlGRBA = NULL,
+	std::vector<RGBA> * pvecOutlRGBA = NULL,
 	std::vector<RGBA> * pvecFillRGBA = NULL
 ) {
 	int nImageSizeX = imgOut.width();
 	int nImageSizeY = imgOut.height();
+
+	dLonBegin = LonDegToStandardRange(dLonBegin);
+	dLonEnd = LonDegToStandardRange(dLonEnd);
 
 	for (size_t f = 0; f < meshShp.faces.size(); f++) {
 		const Face & face = meshShp.faces[f];
@@ -106,6 +109,8 @@ void DrawMesh(
 				dLatDeg);
 
 			int iX, iY;
+
+			dLonDeg = LonDegToStandardRange(dLonDeg);
 
 			RealCoordToImageCoord(
 				dLatDeg, dLonDeg,
@@ -281,27 +286,27 @@ void DrawMesh(
 		unsigned char cBo = 255;
 		unsigned char cAo = 255;
 
-		if (pvecOutlGRBA != NULL) {
-			if (pvecOutlGRBA->size() == meshShp.faces.size()) {
-				cRo = (*pvecOutlGRBA)[f].r();
-				cGo = (*pvecOutlGRBA)[f].g();
-				cBo = (*pvecOutlGRBA)[f].b();
-				cAo = (*pvecOutlGRBA)[f].a();
+		if (pvecOutlRGBA != NULL) {
+			if (pvecOutlRGBA->size() == meshShp.faces.size()) {
+				cRo = (*pvecOutlRGBA)[f].r();
+				cGo = (*pvecOutlRGBA)[f].g();
+				cBo = (*pvecOutlRGBA)[f].b();
+				cAo = (*pvecOutlRGBA)[f].a();
 
-			} else if (pvecOutlGRBA->size() == 1) {
-				cRo = (*pvecOutlGRBA)[0].r();
-				cGo = (*pvecOutlGRBA)[0].g();
-				cBo = (*pvecOutlGRBA)[0].b();
-				cAo = (*pvecOutlGRBA)[0].a();
+			} else if (pvecOutlRGBA->size() == 1) {
+				cRo = (*pvecOutlRGBA)[0].r();
+				cGo = (*pvecOutlRGBA)[0].g();
+				cBo = (*pvecOutlRGBA)[0].b();
+				cAo = (*pvecOutlRGBA)[0].a();
 
-			} else if (pvecOutlGRBA->size() == 0) {
+			} else if (pvecOutlRGBA->size() == 0) {
 				cRo = 255;
 				cGo = 255;
 				cBo = 255;
 				cAo = 255;
 
 			} else {
-				_EXCEPTION1("Anomalous pvecOutlGRBA array size (%lu)", pvecOutlGRBA->size());
+				_EXCEPTION1("Anomalous pvecOutlRGBA array size (%lu)", pvecOutlRGBA->size());
 			}
 		}
 
@@ -371,6 +376,173 @@ void DrawMesh(
 
 ///////////////////////////////////////////////////////////////////////////////
 
+void GetLatLonFromNcFile(
+	NcFile * pncfile,
+	std::vector<double> & dDataLat,
+	std::vector<double> & dDataLon,
+	const std::string & strLatitudeName,
+	const std::string & strLongitudeName,
+	const std::string & strFilename
+) {
+	_ASSERT(pncfile != NULL);
+
+	NcVar * varLat = pncfile->get_var(strLatitudeName.c_str());
+	if (varLat == NULL) {
+		_EXCEPTION2("No variable \"%s\" found in file \"%s\"",
+			strLatitudeName.c_str(), strFilename.c_str());
+	}
+	if (varLat->num_dims() != 1) {
+		_EXCEPTION2("Latitude variable \"%s\" in file \"%s\" must have only one dimension",
+			strLatitudeName.c_str(), strFilename.c_str());
+	}
+
+	NcVar * varLon = pncfile->get_var(strLongitudeName.c_str());
+	if (varLon == NULL) {
+		_EXCEPTION2("No variable \"%s\" found in file \"%s\"",
+			strLongitudeName.c_str(), strFilename.c_str());
+	}
+	if (varLon->num_dims() != 1) {
+		_EXCEPTION2("Longitude variable \"%s\" in file \"%s\" must have only one dimension",
+			strLongitudeName.c_str(), strFilename.c_str());
+	}
+
+	std::string strLatDim0Name(varLat->get_dim(0)->name());
+	std::string strLonDim0Name(varLon->get_dim(0)->name());
+
+	long lLatDim0Size = varLat->get_dim(0)->size();
+	long lLonDim0Size = varLon->get_dim(0)->size();
+
+	if (lLatDim0Size < 2) {
+		_EXCEPTION2("Latitude variable \"%s\" in file \"%s\" must have at least two entries",
+			strLatitudeName.c_str(), strFilename.c_str());
+	}
+	if (lLonDim0Size < 2) {
+		_EXCEPTION2("Longitude variable \"%s\" in file \"%s\" must have at least two entries",
+			strLongitudeName.c_str(), strFilename.c_str());
+	}
+
+	// Unstructured data
+	if (strLonDim0Name == strLatDim0Name) {
+		dDataLat.resize(lLatDim0Size);
+		varLat->get(&(dDataLat[0]), lLatDim0Size);
+
+		dDataLon.resize(lLonDim0Size);
+		varLon->get(&(dDataLon[0]), lLonDim0Size);
+
+	// Rectilinear data
+	} else {
+		std::vector<double> dDataLat1D(lLatDim0Size);
+		varLat->get(&(dDataLat1D[0]), lLatDim0Size);
+
+		dDataLat.resize(lLonDim0Size * lLatDim0Size);
+		for (long lj = 0; lj < lLatDim0Size; lj++) {
+		for (long li = 0; li < lLonDim0Size; li++) {
+			dDataLat[lj*lLonDim0Size+li] = dDataLat1D[lj];
+		}
+		}
+
+		dDataLon.resize(lLonDim0Size * lLatDim0Size);
+		varLon->get(&(dDataLon[0]), lLonDim0Size);
+
+		for (long lj = 1; lj < lLatDim0Size; lj++) {
+			memcpy(&(dDataLon[lj * lLonDim0Size]), &(dDataLon[0]), lLonDim0Size * sizeof(double));
+		}
+	}
+
+	_ASSERT(dDataLon.size() == dDataLat.size());
+
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+void LoadDataFromNcFileVector(
+	NcFileVector & vecNcFiles,
+	const std::string & strVariable,
+	std::vector<long> lAuxIndex,
+	std::vector<float> & data
+) {
+	if (data.size() == 0) {
+		_EXCEPTIONT("data must be initialized prior to calling function");
+	}
+
+	for (size_t f = 0; f < vecNcFiles.size(); f++) {
+		NcVar * var = vecNcFiles[f]->get_var(strVariable.c_str());
+		if (var != NULL) {
+			long lVarDims = var->num_dims();
+
+			// Variable only has 0 dimension
+			if (lVarDims == 0) {
+				_EXCEPTION2("Variable \"%s\" is a constant in file(s) \"%s\"",
+					strVariable.c_str(),
+					vecNcFiles.ToString().c_str());
+			}
+
+			// Variable only has 1 dimension
+			if (lVarDims == 1) {
+				if (var->get_dim(0)->size() != data.size()) {
+					_EXCEPTION4("Variable \"%s\" has 1 dimension, with inconsistent size %li != %lu in file(s) \"%s\"",
+						strVariable.c_str(), var->get_dim(0)->size(), data.size(),
+						vecNcFiles.ToString().c_str());
+				}
+				if (lAuxIndex.size() != 0) {
+					_EXCEPTION3("Unstructured variable \"%s\" has 1 dimension, which is inconsistent with %lu auxiliary indices in file(s) \"%s\"",
+						strVariable.c_str(), lAuxIndex.size(), vecNcFiles.ToString().c_str());
+				}
+				var->get(&(data[0]), var->get_dim(0)->size());
+				return;
+			}
+
+			// Check for 1D data
+			if (var->get_dim(lVarDims-1)->size() == data.size()) {
+				if (lAuxIndex.size() != lVarDims-1) {
+					_EXCEPTION4("Unstructured variable \"%s\" has %li dimensions, which is inconsistent with %lu auxiliary indices in file(s) \"%s\"",
+						strVariable.c_str(), lVarDims, lAuxIndex.size(), vecNcFiles.ToString().c_str());
+				}
+				lAuxIndex.push_back(0);
+				std::vector<long> lSize(lVarDims);
+				for (long l = 0; l < lVarDims-1; l++) {
+					lSize[l] = 1;
+				}
+				lSize[lVarDims-1] = (long)data.size();
+				var->set_cur((long*)&(lAuxIndex[0]));
+				var->get(&(data[0]), (long*)&(lSize[0]));
+				return;
+			}
+
+			// Check for 2D data
+			_ASSERT(lVarDims > 1);
+			long lVarDimYSize = var->get_dim(lVarDims-2)->size();
+			long lVarDimXSize = var->get_dim(lVarDims-1)->size();
+			if (lVarDimYSize * lVarDimXSize == data.size()) {
+				if (lAuxIndex.size() != lVarDims-2) {
+					_EXCEPTION4("Unstructured variable \"%s\" has %li dimensions, which is inconsistent with %lu auxiliary indices in file(s) \"%s\"",
+						strVariable.c_str(), lVarDims, lAuxIndex.size(), vecNcFiles.ToString().c_str());
+				}
+				lAuxIndex.push_back(0);
+				lAuxIndex.push_back(0);
+				std::vector<long> lSize(lVarDims);
+				for (long l = 0; l < lVarDims-2; l++) {
+					lSize[l] = 1;
+				}
+				lSize[lVarDims-2] = lVarDimYSize;
+				lSize[lVarDims-1] = lVarDimXSize;
+				var->set_cur((long*)&(lAuxIndex[0]));
+				var->get(&(data[0]), (long*)&(lSize[0]));
+				return;
+			}
+
+			_EXCEPTION2("Variable \"%s\" has inconsistent dimensions with spatial data array in file(s) \"%s\"",
+					strVariable.c_str(),
+					vecNcFiles.ToString().c_str());
+		}
+	}
+
+	_EXCEPTION2("Variable \"%s\" not found in file(s) \"%s\"",
+		strVariable.c_str(), vecNcFiles.ToString().c_str());
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
 int main(int argc, char** argv) {
 
 // Turn off fatal errors in NetCDF
@@ -417,6 +589,12 @@ try {
 	// Plot type
 	std::string strPlotType;
 
+	// Data to use for coloring shapefiles
+	std::string strShapefile2Data;
+
+	// Variable name to use for coloring shapefiles
+	std::string strShapefile2Var;
+
 	// Shapefile
 	std::string strShapefile;
 
@@ -438,6 +616,8 @@ try {
 		CommandLineString(strLongitudeName, "lonname", "lon");
 		CommandLineString(strDataPath, "datapath", strDataPath.c_str());
 		CommandLineStringD(strPlotType, "plot", "FLUT", "(FLUT|U10|PRECT)");
+		CommandLineString(strShapefile2Data, "shp2data", "");
+		CommandLineString(strShapefile2Var, "shp2var", "");
 		CommandLineString(strShapefile, "shp", "");
 		CommandLineString(strShapefile2, "shp2", "");
 
@@ -576,24 +756,13 @@ try {
 		std::vector<double> dDataLon;
 		std::vector<double> dDataLat;
 
-		NcVar * varLon = vecFiles[0]->get_var(strLongitudeName.c_str());
-		if (varLon == NULL) {
-			_EXCEPTION2("No variable \"%s\" found in file \"%s\"",
-				strLongitudeName.c_str(), vecFiles.GetFilename(0).c_str());
-		}
-		NcVar * varLat = vecFiles[0]->get_var(strLatitudeName.c_str());
-		if (varLat == NULL) {
-			_EXCEPTION2("No variable \"%s\" found in file \"%s\"",
-				strLatitudeName.c_str(), vecFiles.GetFilename(0).c_str());
-		}
-
-		dDataLon.resize(varLon->get_dim(0)->size());
-		varLon->get(&(dDataLon[0]), varLon->get_dim(0)->size());
-
-		dDataLat.resize(varLat->get_dim(0)->size());
-		varLat->get(&(dDataLat[0]), varLat->get_dim(0)->size());
-
-		_ASSERT(dDataLon.size() == dDataLat.size());
+		GetLatLonFromNcFile(
+			vecFiles[0],
+			dDataLat,
+			dDataLon,
+			strLatitudeName,
+			strLongitudeName,
+			vecFiles.GetFilename(0));
 
 		// Allocate data
 		dataFLUT.resize(dDataLon.size());
@@ -605,6 +774,7 @@ try {
 		if (strPlotType == "PRECT") {
 			dataPRECT.resize(dDataLon.size());
 		}
+
 		// Create a new KD Tree containing all nodes
 		Announce("Building kdtree");
 
@@ -653,6 +823,9 @@ try {
 		AnnounceEndBlock("Done");
 	}
 
+	// Maximum outage
+	std::vector<float> dMaxOutage(meshShp2.faces.size(), 0.0f);
+
 	// Load data
 	size_t sTimeIndex = 0;
 
@@ -670,61 +843,27 @@ try {
 				 vecNcFiles.GetFilename(0).c_str());
 		}
 
-		if ((strPlotType == "FLUT") && (vecNcFiles.size() != 2)) {
-			_EXCEPTIONT("For --plot \"FLUT\" two input files must provide FLUT and SOLIN");
-		}
-		if ((strPlotType == "U10") && (vecNcFiles.size() != 3)) {
-			_EXCEPTIONT("For --plot \"U10\" three input files must provide FLUT, SOLIN and U10");
-		}
-		if ((strPlotType == "PRECT") && (vecNcFiles.size() != 3)) {
-			_EXCEPTIONT("For --plot \"PRECT\" three input files must provide FLUT, SOLIN and PRECT");
-		}
+		std::vector<long> lAuxIndex(1);
 
 		for (size_t t = 0; t < vecTimes.size(); t++) {
 			AnnounceStartBlock("Processing time %s", vecTimes[t].ToString().c_str());
 
-			// Load FLUT data
-			NcVar * varFLUT = vecNcFiles[0]->get_var("FLUT");
-			if (varFLUT == NULL) {
-				_EXCEPTION1("File \"%s\" does not contain variable \"FLUT\"",
-					vecNcFiles.GetFilename(0).c_str());
-			}
+			lAuxIndex[0] = t;
 
-			varFLUT->set_cur(t,0);
-			varFLUT->get(&(dataFLUT[0]), 1, dataFLUT.size());
+			// Load FLUT data
+			LoadDataFromNcFileVector(vecNcFiles, "FLUT", lAuxIndex, dataFLUT);
 
 			// Load SOLIN data
-			NcVar * varSOLIN = vecNcFiles[1]->get_var("SOLIN");
-			if (varSOLIN == NULL) {
-				_EXCEPTION1("File \"%s\" does not contain variable \"SOLIN\"",
-					vecNcFiles.GetFilename(1).c_str());
-			}
-
-			varSOLIN->set_cur(t,0);
-			varSOLIN->get(&(dataSOLIN[0]), 1, dataSOLIN.size());
+			LoadDataFromNcFileVector(vecNcFiles, "SOLIN", lAuxIndex, dataSOLIN);
 
 			// Load U10 data
 			if (strPlotType == "U10") {
-				NcVar * varU10 = vecNcFiles[2]->get_var("U10");
-				if (varU10 == NULL) {
-					_EXCEPTION1("File \"%s\" does not contain variable \"U10\"",
-						vecNcFiles.GetFilename(2).c_str());
-				}
-
-				varU10->set_cur(t,0);
-				varU10->get(&(dataU10[0]), 1, dataU10.size());
+				LoadDataFromNcFileVector(vecNcFiles, "U10", lAuxIndex, dataU10);
 			}
 
 			// Load PRECT data
 			if (strPlotType == "PRECT") {
-				NcVar * varPRECT = vecNcFiles[2]->get_var("PRECT");
-				if (varPRECT == NULL) {
-					_EXCEPTION1("File \"%s\" does not contain variable \"PRECT\"",
-						vecNcFiles.GetFilename(2).c_str());
-				}
-
-				varPRECT->set_cur(t,0);
-				varPRECT->get(&(dataPRECT[0]), 1, dataPRECT.size());
+				LoadDataFromNcFileVector(vecNcFiles, "PRECT", lAuxIndex, dataPRECT);
 			}
 
 			// Draw background
@@ -936,8 +1075,54 @@ try {
 					imgOut);
 			}
 			if (strShapefile2 != "") {
-				std::vector<RGBA> vecOutlGRBA(meshShp2.faces.size());
+
+				std::vector<RGBA> vecOutlRGBA(meshShp2.faces.size());
 				std::vector<RGBA> vecFillRGBA(meshShp2.faces.size());
+
+				if (strShapefile2Data != "") {
+					NcFile ncShp2Input(strShapefile2Data.c_str());
+					_ASSERT(ncShp2Input.is_valid());
+
+					std::vector<float> dOutage(meshShp2.faces.size());
+
+					NcVar * varShp2Data = ncShp2Input.get_var(strShapefile2Var.c_str());
+					_ASSERT(varShp2Data != NULL);
+
+					varShp2Data->set_cur(sTimeIndex, 0);
+					varShp2Data->get(&(dOutage[0]), 1, meshShp2.faces.size());
+
+					for (int s = 0; s < dOutage.size(); s++) {
+						if (dOutage[s] > dMaxOutage[s]) {
+							dMaxOutage[s] = dOutage[s];
+						}
+					}
+
+					for (int s = 0; s < dMaxOutage.size(); s++) {
+						unsigned char cR, cG, cB;
+
+						double dAlpha = clamp(dMaxOutage[s], 0.0f, 0.02f) / 0.02;
+
+						cR = 216;
+						cG = 216 * (1.0 - clamp(dMaxOutage[s], 0.0f, 0.05f) / 0.05);
+						cB = 0;
+
+						if (dMaxOutage[s] > 0.1) {
+							cR = 108;
+						}
+						if (dMaxOutage[s] > 0.2) {
+							cR = 54;
+						}
+
+						vecFillRGBA[s] = RGBA(cR, cG, cB, 192 * dAlpha);
+						if (dMaxOutage[s] > 0.05) {
+							vecOutlRGBA[s] = RGBA(0, 0, 0, 128);
+						} else {
+							vecOutlRGBA[s] = RGBA(0, 0, 0, 0);
+						}
+					}
+				}
+
+/*
 				double dPx, dPy, dPz;
 				RLLtoXYZ_Deg(-75.16, 39.95, dPx, dPy, dPz);
 
@@ -952,23 +1137,23 @@ try {
 					);
 
 					if (dGCD > 3.0) {
-						vecOutlGRBA[f] = RGBA(127, 127, 127, 64);
+						vecOutlRGBA[f] = RGBA(127, 127, 127, 64);
 						vecFillRGBA[f] = RGBA(0, 0, 0, 0);
 
 					} else if (dGCD > 2.0) {
-						vecOutlGRBA[f] = RGBA(216, 216, 0, 128);
+						vecOutlRGBA[f] = RGBA(216, 216, 0, 128);
 						vecFillRGBA[f] = RGBA(108, 108, 0, 64);
 
 					} else if (dGCD > 1.0) {
-						vecOutlGRBA[f] = RGBA(216, 128, 0, 192);
+						vecOutlRGBA[f] = RGBA(216, 128, 0, 192);
 						vecFillRGBA[f] = RGBA(108, 64, 0, 96);
 
 					} else {
-						vecOutlGRBA[f] = RGBA(216, 0, 0, 255);
+						vecOutlRGBA[f] = RGBA(216, 0, 0, 255);
 						vecFillRGBA[f] = RGBA(108, 0, 0, 128);
 					}
 				}
-
+*/
 				DrawMesh(
 					meshShp2,
 					dLatBegin,
@@ -976,7 +1161,7 @@ try {
 					dLonBegin,
 					dLonEnd,
 					imgOut,
-					&vecOutlGRBA,
+					&vecOutlRGBA,
 					&vecFillRGBA);
 			}
 
